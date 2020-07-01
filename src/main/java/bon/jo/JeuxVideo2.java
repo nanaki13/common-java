@@ -4,16 +4,16 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 
-public class JeuxVideo {
+public class JeuxVideo2 {
     private String name;
     private LocalDate sorti;
-    private List<Genre> genre;
+    private List<Genre2> genre;
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        JeuxVideo jeuxVideo = (JeuxVideo) o;
+        JeuxVideo2 jeuxVideo = (JeuxVideo2) o;
         return Objects.equals(name, jeuxVideo.name) &&
                 Objects.equals(sorti, jeuxVideo.sorti) &&
                 Objects.equals(genre, jeuxVideo.genre);
@@ -40,15 +40,15 @@ public class JeuxVideo {
         this.sorti = sorti;
     }
 
-    public List<Genre> getGenre() {
+    public List<Genre2> getGenre() {
         return genre;
     }
 
-    public void setGenre(List<Genre> genre) {
+    public void setGenre(List<Genre2> genre) {
         this.genre = genre;
     }
 
-    public static class Genre{
+    public static class Genre2 {
         private String name;
 
         public String getName() {
@@ -64,7 +64,7 @@ public class JeuxVideo {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
 
-            Genre genre = (Genre) o;
+            Genre2 genre = (Genre2) o;
 
             return Objects.equals(name, genre.name);
         }
