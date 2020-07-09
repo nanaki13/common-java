@@ -1,14 +1,17 @@
 package bon.jo
 
-import bon.jo.MethodBag.{GetSet, Getters, Setters}
-
-import scala.reflect.runtime.{universe => ru}
 import java.{lang => jlg, util => jut}
 
-import ReflectUtil.TypeUtil
+import bon.jo.Bridge.MonoBridgeApi
+import bon.jo.MethodBag.{GetSet, Getters, Setters}
+import bon.jo.ReflectUtil.{ReflectApi, TypeUtil}
+import bon.jo.SwingRefToView.Tr
+import javax.swing.{JComponent, JLabel, JPanel, JTextField}
 
-import scala.reflect.ClassTag
 import scala.jdk.CollectionConverters._
+import scala.reflect.ClassTag
+import scala.reflect.runtime.{universe => ru}
+import scala.util.{Failure, Success, Try}
 
 object ReflectUtil {
 
@@ -18,6 +21,8 @@ object ReflectUtil {
     def isJavaList = {
       t <:< ru.typeTag[jut.List[_]].tpe
     }
+
+    def firstGenType = t.typeArgs.head
   }
 
   trait JColFactory {
@@ -27,7 +32,7 @@ object ReflectUtil {
   }
 
   def fieldName(m: ru.MethodSymbol): String = {
-    m.name.toString.substring(3, m.name.toString.length)
+    m.name.toString.substring(3, m.name.toString.length).toLowerCase
   }
 
   object JColFactory extends JColFactory
@@ -67,8 +72,13 @@ object ReflectUtil {
 
   def extractSetters(tpe: ru.Type): Setters = Setters(tpe.members.filter(javaSet).map(_.asMethod))
 
-  class ReflectUtilImpl[T](implicit val tt: ru.TypeTag[T],val cTag : ClassTag[T]) extends ReflectUtil[T] {
+  class FromTypeTagReflect[T](implicit val tt: ru.TypeTag[T], val cTag: ClassTag[T]) extends ReflectUtil[T] {
     override val tpe = tt.tpe
+    override val mirror: ru.Mirror = ru.runtimeMirror(cTag.runtimeClass.getClassLoader)
+  }
+
+  class FromTypeReflect[T](val tt: ru.Type)(implicit val cTag: ClassTag[T]) extends ReflectUtil[T] {
+    override val tpe = tt
     override val mirror: ru.Mirror = ru.runtimeMirror(cTag.runtimeClass.getClassLoader)
   }
 
@@ -78,19 +88,59 @@ object ReflectUtil {
     override implicit val cTag: ClassTag[T] = ClassTag[T](class_)
   }
 
+  trait ReflectApi[T] {
+    def cp(in: T, out: T): Unit
+
+    def extractGetSet: GetSet
+
+    def extractGetters: Getters
+
+    def extractSetters: Setters
+
+    def fields: Iterable[String]
+
+    def fieldsAndType: Iterable[(String, ru.Type)]
+
+    def asMap(t: T): Map[String, Any]
+
+    def asFullMap(t: T): Iterable[(String, Any)]
+
+    def mirror: ru.Mirror
+
+    def gettersTransform(getters: Getters, o: ru.InstanceMirror)(
+      ifNotImmutable: (Getters, Any) => Any
+    ): Iterable[(String, Any)]
+
+    implicit val cTag: ClassTag[T]
+  }
+
   //Java API
-  def create[T](class_ : Class[T]): ReflectUtil[T] = {
-    new JavaReflectUtilImpl[T](class_)
+  def create[T](class_ : Class[T]): SwingRefToView[T] with ReflectApi[T] = {
+    new JavaReflectUtilImpl[T](class_) with ReflectApi[T] with SwingRefToView[T] {
+      override def createRefToView(classs: Class[_]): RefToView[Any, JComponent, JPanel] = {
+        new JavaReflectUtilImpl[Any](classs.asInstanceOf[Class[Any]]) with ReflectApi[Any] with SwingRefToView[Any] {
+          override def createRefToView(classs: Class[_]): RefToView[Any, JComponent, JPanel] = {
+            create[Any](classs.asInstanceOf[Class[Any]])
+          }
+        }
+      }
+    }
   }
 
 }
 
-trait ReflectUtil[T] {
+trait ReflectUtil[T] extends MonoBridgeApi[T] {
 
 
   val tpe: ru.Type
   val mirror: ru.Mirror
-  implicit val cTag : ClassTag[T]
+  protected implicit val cTag: ClassTag[T]
+
+  val selfBridge: MonoBridgeApi[T] = Bridge(this)
+
+
+  override def cp(in: T, out: T): Unit = selfBridge.cp(in, out)
+
   def extractGetSet: GetSet = ReflectUtil.extractGetSet(tpe)
 
   def extractGetters: Getters = ReflectUtil.extractGetters(tpe)
@@ -98,6 +148,7 @@ trait ReflectUtil[T] {
 
   def extractSetters: Setters = ReflectUtil.extractSetters(tpe)
 
+  def fieldName(ms: ru.MethodSymbol): String = ReflectUtil.fieldName(ms)
 
   def asMap(t: T): Map[String, Any] = {
     val instanceMirror = mirror.reflect[T](t)
@@ -110,7 +161,6 @@ trait ReflectUtil[T] {
   }
 
 
-
   def gettersToMap(getters: Getters, o: ru.InstanceMirror): Iterable[(String, Any)] = {
     gettersTransform(getters, o)((gett, oo) => gettersToMap(gett, mirror.reflect[Any](oo)))
   }
@@ -119,7 +169,7 @@ trait ReflectUtil[T] {
     ifNotImmutable: (Getters, Any) => Any
   ): Iterable[(String, Any)] = {
     getters.get.map(m => (ReflectUtil.fieldName(m).toLowerCase, {
-      println(s"${m.name}")
+      println(s"${m.name} , $o")
       val getted = o.reflectMethod(m).apply()
       println(s"${m.name} = $getted")
       if (!m.returnType.isImmutable && !m.returnType.isJavaList && !(m.returnType <:< ru.typeTag[jlg.Class[_]].tpe))
@@ -130,7 +180,7 @@ trait ReflectUtil[T] {
         getted.asInstanceOf[jut.List[Any]].asScala.map(e => {
           if (!getColGenType.isImmutable && !(getColGenType <:< ru.typeTag[jlg.Class[_]].tpe))
             ifNotImmutable(getterOfColGen, e)
-          else if (m.returnType.isJavaList) {
+          else if (getColGenType.isJavaList) {
             println("List of list not handle")
           } else {
             e
@@ -148,4 +198,36 @@ trait ReflectUtil[T] {
     gettersToMap(ReflectUtil.extractGetters(t), instanceMirror)
 
   }
+
+  def fields: Iterable[String] = extractGetters.get.map(fieldName)
+
+  def fieldsAndType: Iterable[(String, ru.Type)] = extractGetters.get.map(e => (fieldName(e), e.returnType))
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
