@@ -1,13 +1,16 @@
 package bon.jo
 
-import bon.jo.Order.{ModOrder, OrderApi}
+import bon.jo.MethodBag.{Gett, Getters}
+import bon.jo.Order.{Builder, ModOrder, OrderApi}
 import bon.jo.ReflectUtil.ReflectApi
 import bon.jo.ReflectUtil.TypeUtil
 
+import scala.annotation.tailrec
 import scala.reflect.ClassTag
 import scala.util.{Failure, Success, Try}
 import scala.reflect.runtime.{universe => ru}
 
+case class GetContext(getters: Gett,self : ru.InstanceMirror)
 trait RefToView[A, V, C] extends ViewCreator[V, C] with ViewAgg[V, C] with AnyRefToViewProvider[V, C] {
 
   s: ReflectApi[A] =>
@@ -58,13 +61,21 @@ trait RefToView[A, V, C] extends ViewCreator[V, C] with ViewAgg[V, C] with AnyRe
     }, value)
   }
 
+
   def toView(e: A)(implicit spec: ViewSpec ): C = {
     val view: C = this.apply()
     implicit val f: Map[String, ru.Type] = fieldsAndType.toMap
 
+
     def localMapToView: (String, Any) => (String, Option[ViewFactory[Any, V, C]], Any) = mapToView(_, _)
 
-    gettersTransform(extractGetters, mirror.reflect(e))(
+    val gCtx = GetContext(extractGetters, mirror.reflect(e))
+    val aspec = if(spec == NoSpec){
+      spec.default(gCtx,this)
+    }else{
+      spec
+    }
+    gettersTransform(gCtx.getters, gCtx.self)(
       (g, o) => o
     ).filter(_._2 != None).map(localMapToView.tupled).foreach(e => {
       val vFavtory: ViewFactory[Any, V, C] = e._2.getOrElse(defaultView)
@@ -75,10 +86,45 @@ trait RefToView[A, V, C] extends ViewCreator[V, C] with ViewAgg[V, C] with AnyRe
 }
 
 trait ViewSpec {
-  def order: OrderApi
+  def default(gCtx: GetContext,reflectApi: ReflectApi[_]) : ViewSpec = {
+
+    val builderOrder = Builder.apply("root")
+    val nameMap = reflectApi.gettersTransform(gCtx.getters,gCtx.self){
+      (e,o) => e.get.map(_.name.toString)
+    }
+    nameMap.toList.sortBy{e => e._1}.zipWithIndex.foreach(a => {
+      builderOrder.updateDynamic(a._1._1)(a._2)
+      a._1._2 match {
+        case e: Iterable[(String, Any)] =>
+          explore(e)(builderOrder)
+        case _ =>
+      }
+
+    })
+    ViewSpec(builderOrder.r)
+  }
+  @tailrec
+  def explore(l : Iterable[(String,Any)])(builderOrder : Builder) : Unit={
+    l.toList.sortBy{e => e._1}.zipWithIndex.foreach(a => {
+      builderOrder.updateDynamic(a._1._1)(a._2)
+      a._1._2 match {
+        case e: Iterable[(String, Any)] =>
+          explore(e)(builderOrder)
+        case _ =>
+      }
+
+    })
+  }
+  def specs: OrderApi
+  def specs(order : OrderApi): ViewSpec = ViewSpec(order)
 }
+object ViewSpec{
+  def apply(): ViewSpec =  ViewSpecImpl()
+  def apply(order : OrderApi): ViewSpec =  ViewSpecImpl(order)
+}
+case class ViewSpecImpl(specs: OrderApi = NoOrder) extends ViewSpec
 object NoSpec extends ViewSpec {
-  override def order: OrderApi = NoOrder
+  override def specs: OrderApi = NoOrder
 }
 object NoOrder extends  NoOrder
 trait NoOrder extends OrderApi{
@@ -111,7 +157,7 @@ trait ModifalbeOrderChild {
   me: Order =>
   var sub: List[Order]
 
-  def :+(order: Order): List[Order] = sub :+ order
+  def +=(order: Order): Unit = sub = sub :+ order
 }
 
 object Order {
@@ -130,7 +176,7 @@ object Order {
     protected var root: OrderApi with Order with ModifalbeOrderChild
 
     def updateDynamic(filed: String)(index: Int) = {
-      root :+ Order(filed, index, Nil)
+      root += Order(filed, index, Nil)
     }
 
     def selectDynamic(s: String): Builder = BuilderImpl(root.subMap(s))

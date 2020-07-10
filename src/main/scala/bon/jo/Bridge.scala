@@ -3,7 +3,7 @@ package bon.jo
 import java.{util => jut}
 
 import bon.jo.Bridge.BridgeApi
-import bon.jo.MethodBag.Getters
+import bon.jo.MethodBag.{Gett, Getters}
 import bon.jo.ReflectUtil.{FromTypeReflect, JColFactory, TypeUtil}
 
 import scala.reflect.ClassTag
@@ -24,7 +24,7 @@ trait Bridge[I, O] extends BridgeApi[I, O] with JColFactory {
     createBridge[O](reflectUtilInput.extractGetters)
   }
 
-  protected def createBridge[O](getters: Getters)(implicit to: ru.TypeTag[O]): BridgeType = {
+  protected def createBridge[O](getters: Gett)(implicit to: ru.TypeTag[O]): BridgeType = {
     val setByName: Map[String, ru.MethodSymbol] = reflectUtilOutPut
       .extractSetters
       .set
